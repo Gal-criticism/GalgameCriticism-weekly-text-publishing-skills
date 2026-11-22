@@ -13,6 +13,7 @@ import html
 import json
 import os
 from pathlib import Path
+from safety import preview_directory
 
 CSS = """
 :root { color-scheme: light; }
@@ -24,17 +25,19 @@ h1 { font-size: 22px; line-height: 1.5; margin: 0 0 4px; }
 .badge { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 4px; margin-left: 8px; vertical-align: middle; }
 .badge.proposed { background: #fff3e6; color: #ff7f24; border: 1px solid #ffd591; }
 .badge.manual { background: #f6ffed; color: #52c41a; border: 1px solid #b7eb8f; }
-.intro { color: #9499a0; font-size: 14px; margin: 8px 0 16px; }
-.cover { width: 100%; border-radius: 6px; display: block; margin: 4px 0 20px; }
-h2 { font-size: 20px; font-weight: 700; margin: 28px 0 12px; padding-left: 10px; border-left: 4px solid #00aeec; }
-h3 { font-size: 16px; font-weight: 700; margin: 20px 0 8px; }
+.intro, .credits { color: #61666d; text-align: right; font-size: 17px; line-height: 1.8; }
+.intro { margin: 8px 0 16px; }
+.cover { width: 100%; border-radius: 6px; display: block; margin: 4px 0 0; }
+h2 { font-size: 24px; font-weight: 700; margin: 0; text-align: center; }
+h3 { font-size: 17px; font-weight: 700; margin: 0 0 8px; }
 p.body { font-size: 15px; line-height: 1.8; margin: 8px 0; color: #18191c; }
 figure { margin: 12px 0; }
 figure img { width: 100%; border-radius: 4px; display: block; }
-figcaption { font-size: 12px; color: #9499a0; margin-top: 4px; word-break: break-all; }
-.credits { margin-top: 36px; padding-top: 16px; border-top: 1px dashed #e3e5e7; font-size: 13px; color: #61666d; line-height: 1.9; }
+.credits { margin: 0; }
+.gap { height: 1.8rem; }
+.section-gap { height: 3.6rem; }
 .review { background: #fffbe6; border: 1px solid #ffe58f; border-radius: 8px; padding: 16px 20px; margin: 0 0 20px; font-size: 13px; }
-.review h2 { border: none; padding: 0; margin: 0 0 8px; font-size: 15px; color: #ad6800; }
+.review h2 { text-align: left; border: none; padding: 0; margin: 0 0 8px; font-size: 15px; color: #ad6800; }
 .review ul { margin: 6px 0; padding-left: 20px; }
 .review li { margin: 3px 0; line-height: 1.6; }
 .item-block { border: 1px solid transparent; }
@@ -68,7 +71,12 @@ def render(data: dict, issue_dir: Path, article_path: Path) -> str:
     if not data.get("credits"):
         review.append("<li><b>credits 为空</b>：请补充「文案：…」「文案审核：…」（参考上一期）。</li>")
     review.append(f"<li>共 {n_items} 条新闻、{n_pics} 张入选配图；灰显删除线的候选图为未选中，如需换图改 article.json 的 <code>selected</code>。</li>")
-    review.append("<li>核对：章节顺序（新作→汉化→周边）、每条新闻的配图位置（首图在小标题后、次图在正文后）、正文无外链、无「（简）」前缀。</li>")
+    review.append("<li>作品新闻首图优先选对应作品主视觉，次图放在正文后。</li>")
+    publish_cover = data.get("source", {}).get("publish_cover")
+    if publish_cover:
+        review.append("<li>投稿自定义封面（16:10）：" + esc(publish_cover) + "。</li>")
+    else:
+        review.append("<li>请在投稿前补充 16:10 自定义封面。</li>")
     if warns:
         review.append(f"<li>解析警告 {len(warns)} 条（多候选图默认取前 2 张等），见下方列表。</li>")
         review.append("<ul>" + "".join("<li class='note'>%s</li>" % esc(w) for w in warns) + "</ul>")
@@ -88,20 +96,24 @@ def render(data: dict, issue_dir: Path, article_path: Path) -> str:
     cover = data.get("source", {}).get("cover")
     if cover:
         parts.append("<img class='cover' src='%s' alt='cover'>" % esc(rel(cover, preview_dir, issue_dir)))
-    for sec in data.get("sections", []):
+    for section_index, sec in enumerate(data.get("sections", [])):
+        if section_index:
+            parts.append("<div class='section-gap' aria-hidden='true'></div>")
         parts.append("<h2>%s</h2>" % esc(sec.get("heading", sec.get("key", ""))))
-        for item in sec.get("items", []):
+        for item_index, item in enumerate(sec.get("items", [])):
+            if item_index:
+                parts.append("<div class='gap' aria-hidden='true'></div>")
             sel = item.get("selected", [])
             parts.append("<div class='item-block'>")
             parts.append("<h3>%s</h3>" % esc(item.get("heading", "")))
             if sel:
                 p = item["candidates"][sel[0]]
-                parts.append("<figure><img src='%s' alt=''><figcaption>%s</figcaption></figure>" % (esc(rel(p, preview_dir, issue_dir)), esc(p)))
+                parts.append("<figure><img src='%s' alt=''></figure>" % esc(rel(p, preview_dir, issue_dir)))
             for para in item.get("body", []):
                 parts.append("<p class='body'>%s</p>" % esc(para))
             if len(sel) > 1:
                 p = item["candidates"][sel[1]]
-                parts.append("<figure><img src='%s' alt=''><figcaption>%s</figcaption></figure>" % (esc(rel(p, preview_dir, issue_dir)), esc(p)))
+                parts.append("<figure><img src='%s' alt=''></figure>" % esc(rel(p, preview_dir, issue_dir)))
             # 候选图清单
             cands = item.get("candidates", [])
             if cands:
@@ -112,8 +124,13 @@ def render(data: dict, issue_dir: Path, article_path: Path) -> str:
                     chips.append("<span class='%s'>%s %s</span>" % (cls, mark, esc(Path(c).name)))
                 parts.append("<div class='cands'>候选 %d 张：%s</div>" % (len(cands), " ".join(chips)))
             parts.append("</div>")
-    for c in data.get("credits", []) or []:
-        parts.append("<div class='credits'>%s</div>" % esc(c).replace("\n", "<br>"))
+    credits = [
+        esc(line) for credit in data.get("credits", []) or []
+        for line in credit.splitlines() if line.strip()
+    ]
+    if credits:
+        parts.append("<div class='gap' aria-hidden='true'></div>")
+        parts.append("<p class='credits'>%s</p>" % "<br>".join(credits))
     parts.append("</div></div></body></html>")
     return "".join(parts)
 
@@ -135,8 +152,9 @@ def main() -> None:
     args = ap.parse_args()
 
     issue_dir = Path(args.issue_dir).expanduser().resolve()
-    article_path = Path(args.article) if args.article else issue_dir / "_preview" / "article.json"
-    out = Path(args.out) if args.out else issue_dir / "_preview" / "preview.html"
+    preview = preview_directory(issue_dir)
+    article_path = Path(args.article) if args.article else preview / "article.json"
+    out = Path(args.out) if args.out else preview / "preview.html"
     data = json.loads(article_path.read_text(encoding="utf-8"))
 
     out.parent.mkdir(parents=True, exist_ok=True)
