@@ -120,8 +120,9 @@ def build_paragraphs(data: dict, issue_dir: Path, imgs: dict[str, dict]) -> list
         if key not in imgs:
             raise SystemExit(f"[build] 封面未上传/未找到: {cover}")
         paras.append(pic_para(imgs[key]))
-        paras.append(empty_para())
-    for sec in data.get("sections", []):
+    for section_index, sec in enumerate(data.get("sections", [])):
+        if section_index:
+            paras.extend([empty_para(), empty_para()])
         paras.append(text_para(sec.get("heading", sec.get("key", "")), font_size=24, bold=True))
         for idx, item in enumerate(sec.get("items", [])):
             if idx > 0:
@@ -140,11 +141,13 @@ def build_paragraphs(data: dict, issue_dir: Path, imgs: dict[str, dict]) -> list
                 if key not in imgs:
                     raise SystemExit(f"[build] 配图未上传: {item['candidates'][sel[1]]}")
                 paras.append(pic_para(imgs[key]))
-    for c in data.get("credits", []) or []:
+    credits = [
+        line for credit in data.get("credits", []) or []
+        for line in credit.splitlines() if line.strip()
+    ]
+    if credits:
         paras.append(empty_para())
-        for line in c.split("\n"):
-            if line.strip():
-                paras.append(text_para(line))
+        paras.append(text_para("\n".join(credits), gray=True))
     return paras
 
 
@@ -181,9 +184,13 @@ def build_raw_content(data: dict, issue_dir: Path, imgs: dict[str, dict]) -> str
     cover = data.get("source", {}).get("cover")
     if cover:
         add_img(imgs[str((issue_dir / cover).resolve())])
-    for sec in data.get("sections", []):
+    for section_index, sec in enumerate(data.get("sections", [])):
+        if section_index:
+            ops.append({"insert": "\n\n"})
         add_text(sec.get("heading", sec.get("key", "")), bold=True)
-        for item in sec.get("items", []):
+        for item_index, item in enumerate(sec.get("items", [])):
+            if item_index:
+                ops.append({"insert": "\n"})
             add_text(item.get("heading", ""), bold=True)
             sel = item.get("selected", [])
             if sel:
@@ -192,8 +199,10 @@ def build_raw_content(data: dict, issue_dir: Path, imgs: dict[str, dict]) -> str
                 add_text(b)
             if len(sel) > 1:
                 add_img(imgs[str((issue_dir / item["candidates"][sel[1]]).resolve())])
-    for c in data.get("credits", []) or []:
-        add_text(c)
+    credits = [credit for credit in data.get("credits", []) or [] if credit.strip()]
+    if credits:
+        ops.append({"insert": "\n"})
+        add_text("\n".join(credits))
     return json.dumps({"ops": ops}, ensure_ascii=False)
 
 

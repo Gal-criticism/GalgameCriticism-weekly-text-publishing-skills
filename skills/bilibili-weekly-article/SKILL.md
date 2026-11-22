@@ -31,8 +31,8 @@ description: 把周报期目录里的 docx 文字稿和图包素材排版成 B �
    - 核对章节顺序、正文无外链、无「（简）」前缀残留。
 4. **上线**（二选一）：
    - **草稿模式（推荐）**：`python3 scripts/save_draft.py <期目录> --account-id <目标UID>`（上传配图 +
-     存草稿），然后人工到 创作中心→专栏投稿→草稿箱 打开草稿审核，点「发布」；
-   - 直接发布：`python3 scripts/build_opus.py <期目录> --account-id <目标UID>`（上传配图到 B 站 BFS，
+     存草稿），然后在目标账号的创作中心打开该草稿，完成下方「草稿编辑器定稿」并保存，回读后提交用户确认；
+   - 直接发布（仅在用户明确授权且已核验本期完整版式与投稿设置时使用。需要在编辑器补齐的周报走草稿模式）：`python3 scripts/build_opus.py <期目录> --account-id <目标UID>`（上传配图到 B 站 BFS，
      产出 opus_payload.json）→ `python3 scripts/publish_opus.py <期目录> --account-id <目标UID> --yes`
      （发布 + 回读验证，输出公开链接）。
 
@@ -46,11 +46,21 @@ description: 把周报期目录里的 docx 文字稿和图包素材排版成 B �
 | 区块  | 规格                                   |
 | --- | ------------------------------------ |
 | 标题  | `【Gal周报N期】<副标题>`，≤ 80 字              |
-| 首行  | 灰色小字「本文首发于公众号 Galgame批评」             |
-| 封面  | 期目录「*文章封面*.png」，横幅图，作为正文第一张图         |
-| 章节  | 新作资讯 / 汉化情报 / 周边信息，24px 加粗，顺序固定      |
-| 新闻条 | 小标题 17px 加粗 → 首图 → 正文段 → 次图（可选），条间空段 |
-| 结尾  | 文案/审核署名段                             |
+| 首行 | 灰字、右对齐「本文首发于公众号 Galgame批评」 |
+| 正文封面 | 「*文章封面*.png/.jpg/.jpeg」，横幅图，作为正文第一张图 |
+| 章节 | 新作资讯 / 汉化情报 / 周边信息，24px 加粗、居中，顺序固定 |
+| 新闻条 | 17px 加粗小标题 → 首图 → 正文 → 次图（可选）；配图不带默认图注 |
+| 间距 | 同栏目相邻两条新闻之间一空行；栏目切换前两空行；最后一条新闻和署名段之间一空行 |
+| 署名 | 灰字、右对齐；文案和文案审核在同一段内，用软换行分隔 |
+
+### 草稿编辑器定稿
+
+1. 打开目标草稿，清除导入时生成的「图片」等默认图注，保留图片本身。核对开头、三处栏目标题、所有条间空行以及末尾署名。文案与文案审核之间按 Shift+Enter 软换行。
+2. 在发布设置启用自定义封面，上传期目录的 16:10 封面（如 `*视频封面 16-10.jpg`），确认裁剪。正文横幅使用独立的文章封面。
+3. 勾选「声明此文章为原创」，选择已有文集「每周Galgame新闻速递」。
+4. 点击「保存为草稿」并重新打开，核对正文版式、配图、署名、封面、原创声明和文集。用户只要求保存草稿或要求发布前确认时，到此停下；收到明确发布确认后再继续。
+
+API 草稿已生成正文空行、灰色署名和原创标记。对齐、软换行的显示、自定义封面和文集以创作中心回读为准，发现差异在编辑器内补齐。
 
 docx 段落样式 `2` = 章节标题、`3` = 新闻小标题；纯 URL 段与正文尾部外链在排版时剥离；  
 「（简）」前缀从小标题剥离。清洗规则与例外见 [references/material-contract.md](references/material-contract.md)。
@@ -64,7 +74,7 @@ docx 段落样式 `2` = 章节标题、`3` = 新闻小标题；纯 URL 段与正
 `_preview/article.json`：
 
 - `issue` / `period` / `subtitle` / `title` / `title_status`（proposed 待定稿 / manual 已定稿）
-- `source.docx`、`source.image_pack`、`source.cover`、`source.readlist`
+- `source.docx`、`source.image_pack`、`source.cover`（正文横幅）、`source.publish_cover`（16:10 投稿封面）、`source.readlist`
 - `intro`（首发声明模板常量）
 - `sections[].items[]`：`n`（序号）、`heading`、`body[]`、`candidates[]`（图包内全部候选图，  
   相对期目录）、`selected[]`（入选候选图索引，默认前 2 张）
@@ -111,7 +121,7 @@ requests 直传：120s 超时+重试，库版 aiohttp 不支持 timeout 大图�
 删除端点 `x/dynamic/feed/article/draft/delete`（body article_id）；`draft/list` 列表  
 接口有索引延迟不可靠，回读用 `x/article/creative/draft/view?aid=<id>`。  
 已有回执或未知提交时停止，不自动删除、覆盖或重建草稿。先到创作中心核对结果；新版本不提供 `--replace`。
-草稿的文集（list_id）留 0，由人工在编辑器「选择文集」拾取。  
+草稿 API 的文集（list_id）留 0。在编辑器中选「每周Galgame新闻速递」，并按「草稿编辑器定稿」保存和回读。
 264 期实证：42 图全上传、118 段落、article_id=382988，浏览器草稿箱验证版式与线上一致。
 
 ## 验收与交付

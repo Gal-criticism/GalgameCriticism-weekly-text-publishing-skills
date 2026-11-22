@@ -37,6 +37,7 @@ SECTION_DIR_TO_HEADING = {
 # docx 中章节标题段的样式 id（Word 中文环境常见取值）；同时用文本匹配兜底
 SECTION_STYLE_IDS = {"2", "3", "1"}
 ITEM_STYLE_IDS = {"3", "4"}
+PUBLISH_ASPECT = re.compile(r"(?<!\d)16[-_:：比x×]10(?!\d)")
 INTRO_TEMPLATE = "本文首发于公众号 Galgame批评"
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
@@ -103,13 +104,29 @@ def find_docx(issue_dir: Path) -> Path | None:
 
 
 def find_cover(issue_dir: Path) -> Path | None:
-    for p in sorted(issue_dir.glob("*.png")):
-        if "文章封面" in p.name:
-            return p
-    for p in sorted(issue_dir.glob("*.png")):
-        if "封面" in p.name:
-            return p
-    return None
+    images = [
+        p for p in sorted(issue_dir.iterdir())
+        if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg"}
+    ]
+    article_cover = next((p for p in images if "文章封面" in p.name), None)
+    if article_cover:
+        return article_cover
+    return next(
+        (p for p in images if p.suffix == ".png" and "封面" in p.name and "视频" not in p.name
+         and not PUBLISH_ASPECT.search(p.stem)),
+        None,
+    )
+
+
+def find_publish_cover(issue_dir: Path) -> Path | None:
+    """查找独立的投稿封面，避免把正文横幅或 4:3 封面当成 16:10 素材。"""
+    return next(
+        (p for p in sorted(issue_dir.iterdir())
+         if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg"}
+         and "封面" in p.stem
+         and PUBLISH_ASPECT.search(p.stem)),
+        None,
+    )
 
 
 def scan_image_pack(pack_root: Path) -> dict[str, list[dict]]:
@@ -154,6 +171,7 @@ def parse(issue_dir: Path, readlist: str | None) -> dict:
             "正文大概率残留【注音】括号，请向制作方要去注音版，或人工清除后再排版"
         )
     cover = find_cover(issue_dir)
+    publish_cover = find_publish_cover(issue_dir)
     pack = scan_image_pack(issue_dir / "图包")
 
     paras = read_docx_paragraphs(docx)
@@ -301,6 +319,7 @@ def parse(issue_dir: Path, readlist: str | None) -> dict:
             "docx": docx.name,
             "image_pack": "图包",
             "cover": cover.name if cover else None,
+            "publish_cover": publish_cover.name if publish_cover else None,
             "readlist": readlist,
         },
         "title": f"【Gal周报{issue_no}期】{subtitle}" if issue_no else subtitle,

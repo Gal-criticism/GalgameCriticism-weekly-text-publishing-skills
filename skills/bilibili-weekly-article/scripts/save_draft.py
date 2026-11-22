@@ -95,8 +95,9 @@ def build_paragraphs(data: dict, issue_dir: Path, imgs: dict[str, dict]) -> list
         if key not in imgs:
             raise SystemExit(f"[draft] 封面未上传/未找到: {cover}")
         paras.append(pic_para(imgs[key]))
-        paras.append(text_para(""))
-    for sec in data.get("sections", []):
+    for section_index, sec in enumerate(data.get("sections", [])):
+        if section_index:
+            paras.extend([text_para(""), text_para("")])
         paras.append(text_para(sec.get("heading", sec.get("key", "")), font_size=24, bold=True))
         for idx, item in enumerate(sec.get("items", [])):
             if idx > 0:
@@ -115,11 +116,13 @@ def build_paragraphs(data: dict, issue_dir: Path, imgs: dict[str, dict]) -> list
                 if key not in imgs:
                     raise SystemExit(f"[draft] 配图未上传: {item['candidates'][sel[1]]}")
                 paras.append(pic_para(imgs[key]))
-    for c in data.get("credits", []) or []:
+    credits = [
+        line for credit in data.get("credits", []) or []
+        for line in credit.splitlines() if line.strip()
+    ]
+    if credits:
         paras.append(text_para(""))
-        for line in c.split("\n"):
-            if line.strip():
-                paras.append(text_para(line))
+        paras.append(text_para("\n".join(credits), gray=True))
     return paras
 
 
