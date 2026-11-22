@@ -3,6 +3,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const { attach } = require('./browser-session.cjs');
+const { imageFile, checkSubmission, claimSubmission, zhihuAccount } = require('./safety.cjs');
 
 const args = { publish: false };
 for (let i = 2; i < process.argv.length; i++) {
@@ -12,8 +13,9 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 const manifest = JSON.parse(fs.readFileSync(args.manifest, 'utf8'));
 const payloadDir = path.dirname(args.manifest);
-const optDir = args.optimized;
+const optDir = args.optimized || path.join(payloadDir, 'images-opt');
 const receiptFile = path.join(payloadDir, 'zhihu-receipt.json');
+checkSubmission(receiptFile);
 const log = o => console.log(JSON.stringify({ t: new Date().toISOString(), ...(typeof o === 'string' ? { msg: o } : o) }));
 
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -33,6 +35,15 @@ if (blocks.length && blocks[0].type !== 'image' && blocks[0].nodes.map(n => n.te
 
 const expectedText = blocks.filter(b => b.type !== 'image').map(b => b.nodes.map(n => n.text).join('')).join('').replace(/\s+/g, '');
 const expectedImages = blocks.filter(b => b.type === 'image').length;
+const imageFiles = blocks.map(block => {
+  if (block.type !== 'image') return null;
+  const original = block.path;
+  if (typeof original !== 'string' || path.isAbsolute(original) || original.split(/[\\/]/).includes('..')) {
+    throw new Error('Image must stay inside its source bundle');
+  }
+  const name = path.basename(original).replace(/\.(png|jpg|jpeg)$/i, '.jpg');
+  return fs.existsSync(path.join(optDir, name)) ? imageFile(optDir, name) : imageFile(payloadDir, original);
+});
 
 const paste = (page, text, html) => page.evaluate(([t, h]) => {
   const el = document.querySelector('.public-DraftEditor-content[contenteditable="true"]');
@@ -56,20 +67,15 @@ const stats = page => page.evaluate(() => {
 (async () => {
   const { ctx, reused, port } = await attach(process.env.ZHIHU_PROFILE, process.env.ZHIHU_DEBUG_PORT || 9444);
   log({ step: 'browser', reused, port });
-  const page = ctx.pages()[0] || await ctx.newPage();
+  const page = await ctx.newPage();
   try {
     await page.goto('https://zhuanlan.zhihu.com/write', { waitUntil: 'domcontentloaded', timeout: 60000 });
     const editor = page.locator('.public-DraftEditor-content[contenteditable="true"]').first();
     await editor.waitFor({ timeout: 60000 });
     await page.waitForTimeout(2500);
 
-    const me = await page.evaluate(async () => {
-      const r = await fetch('https://www.zhihu.com/api/v4/me', { credentials: 'include' });
-      const j = await r.json();
-      return { name: j.name, id: j.id, url_token: j.url_token };
-    });
-    log({ step: 'identity', me });
-    if (me.name !== 'Galgame批评') throw new Error(`Unexpected zhihu account: ${me.name}`);
+    await zhihuAccount(page);
+    log({ step: 'identity_verified' });
 
     // title
     const titleInput = page.locator('textarea[placeholder*="标题"]').first();
@@ -85,8 +91,7 @@ const stats = page => page.evaluate(() => {
     for (let i = 0; i < blocks.length; i++) {
       const b = blocks[i];
       if (b.type === 'image') {
-        const optimized = path.join(optDir, path.basename(b.path).replace(/\.(png|jpg|jpeg)$/i, '.jpg'));
-        const file = fs.existsSync(optimized) ? optimized : path.join(payloadDir, b.path);
+        const file = imageFiles[i];
         let ok = false;
         for (let attempt = 1; attempt <= 1 && !ok; attempt++) {
           const before = await editor.locator('img').count();
@@ -140,7 +145,7 @@ const stats = page => page.evaluate(() => {
 
     // cover
     const coverInput = page.locator('.UploadPicture-input');
-    if (await coverInput.count()) {
+    if (args.cover && await coverInput.count()) {
       await coverInput.setInputFiles(args.cover);
       await page.waitForTimeout(8000);
       log({ step: 'cover', uploaded: await page.locator('.UploadPicture img[src*="zhimg"]').count() > 0 });
@@ -155,6 +160,8 @@ const stats = page => page.evaluate(() => {
       return;
     }
     if (!textOk || s.images !== expectedImages || zhimg !== expectedImages) throw new Error('Fidelity gate failed; not publishing');
+    await zhihuAccount(page);
+    claimSubmission(receiptFile);
     fs.writeFileSync(receiptFile, JSON.stringify({ ...state, status: 'submitting' }, null, 2));
     const respPromise = page.waitForResponse(r => /\/api\/v4\/content\/publish/.test(r.url()) && r.request().method() === 'POST', { timeout: 120000 });
     await page.getByRole('button', { name: '发布', exact: true }).click();

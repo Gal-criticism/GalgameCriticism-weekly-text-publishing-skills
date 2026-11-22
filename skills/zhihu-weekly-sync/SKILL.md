@@ -15,7 +15,7 @@ description: 在用户要求把获授权的周报发布到知乎文章/专栏、
 
 ## 一个窗口贯穿全流程（禁止反复重启浏览器）
 
-`scripts/browser-session.cjs` 提供 `attach(profileDir, port)`：先尝试 `connectOverCDP` 连接已在运行的专用 Chrome，只有在探测不到调试端口时才以 `--no-sandbox --remote-debugging-port=<port>` 启动一次（detached），随后所有步骤复用同一窗口。
+`scripts/browser-session.cjs` 提供 `attach(profileDir, port)`：先尝试 `connectOverCDP` 连接已在运行的专用 Chrome，只有在授权启动、设置 `CHROME_ALLOW_LAUNCH=1` 且探测不到调试端口时才以 `--enable-automation --remote-debugging-address=127.0.0.1 --remote-debugging-port=<port>` 启动一次（detached），随后所有步骤复用同一窗口。
 
 - 知乎默认端口 `9444`（`ZHIHU_DEBUG_PORT` 可覆盖），微博默认 `9333`；两个平台各用一个 profile + 端口，互不干扰。
 - 每一步结束都**不关闭**浏览器：下一步重新 `attach` 即可，登录态与已填草稿都留在窗口里。
@@ -24,9 +24,9 @@ description: 在用户要求把获授权的周报发布到知乎文章/专栏、
 
 ## 已验证发布链路（第265期跑通，2026-10）
 
-1. 连接专用 profile（`ZHIHU_PROFILE`）→ `/api/v4/me` 核对昵称必须等于目标账号（`Galgame批评`），不匹配立即停止。
-2. **直排正文**：`scripts/zhihu-compose.cjs --manifest <manifest.json> --optimized <图片目录> --cover <封面>`。脚本填标题、逐块粘贴正文、按 manifest 顺序逐张上传图片，并做保真校验。
-3. 校验通过后发布：同一脚本加 `--publish`，或对已存在的草稿用 `scripts/zhihu-draft-publish.cjs --manifest <manifest.json> --publish`（打开草稿箱里完全匹配的那篇再发布，避免产生第二篇）。
+1. 连接专用 profile（`ZHIHU_PROFILE`），写入前核对 `/api/v4/me` 返回的 ID 与 `ZHIHU_ACCOUNT_ID` 一致。
+2. **直排正文**：`scripts/zhihu-compose.cjs --manifest <manifest.json> --optimized <图片目录> --cover <封面>`。脚本填标题、逐块粘贴正文、按 manifest 顺序逐张上传图片，并做保真校验。优先校验并上传对应的优化图，缺少优化图时使用原图。
+3. 校验通过后发布：同一脚本加 `--publish`，或对已存在的草稿用 `scripts/zhihu-draft-publish.cjs --manifest <manifest.json> --publish`（打开草稿箱里完全匹配的那篇再发布，避免产生第二篇。仅回查草稿时省略 `--publish`）。
 4. 回读：`scripts/zhihu-verify.cjs`（`ARTICLE=<公开URL> MANIFEST=<manifest>`）核对标题、作者、全文和图片顺序。
 5. 最终回复直接给出 `https://zhuanlan.zhihu.com/p/<id>` 公开链接。
 
@@ -78,7 +78,7 @@ description: 在用户要求把获授权的周报发布到知乎文章/专栏、
 ## 工作流
 
 1. 接收统一素材清单，核对标题、正文、图片顺序、署名、来源链接和目标知乎账号；标题和正文未确认时只生成预览。
-2. 按共享会话规则 `attach` 已有专用浏览器，只读核对当前账号；需要登录、profile 被其他进程占用或账号不匹配时停止，不重置。
+2. 按[本平台会话规则](references/browser-session.md) `attach` 已有专用浏览器，只读核对当前账号；需要登录、profile 被其他进程占用或账号不匹配时停止，不重置。
 3. 直排并完成“正文图片保真检查”；未通过时只修复或切换适配器，不降级成纯文本发布。
 4. 发布后回读知乎文章 URL、标题、作者、完整正文、全部图片顺序和封面状态；无法取得公开 URL 或仍是草稿时不算成功。
 5. 回执记录标题、来源 URL、目标账号、文章 URL、封面状态和核验时间，不记录 Cookie 或令牌。

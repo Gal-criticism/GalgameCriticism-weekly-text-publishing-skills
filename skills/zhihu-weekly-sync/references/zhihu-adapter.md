@@ -2,7 +2,7 @@
 
 ## 会话与身份
 
-用一个专用 profile 的 Chrome（CDP 端口默认 `9444`），由 `scripts/browser-session.cjs` 的 `attach()` 复用同一窗口，不逐步开关浏览器。身份以 `/api/v4/me` 的 `name` 为准，必须等于目标账号（`Galgame批评`）；只记录公开身份，不输出完整响应。CDP 端口是运行时配置，不能硬编码到团队 skill（可用 `ZHIHU_DEBUG_PORT` 覆盖）。
+用一个专用 profile 的 Chrome（CDP 端口默认 `9444`），由 `scripts/browser-session.cjs` 的 `attach()` 复用同一窗口，不逐步开关浏览器。身份以 `/api/v4/me` 的 `id` 为准，必须等于运行时配置的 `ZHIHU_ACCOUNT_ID`；日志只记录核验结果。CDP 端口是运行时配置，不能硬编码到团队 skill（可用 `ZHIHU_DEBUG_PORT` 覆盖）。
 
 ## 直排正文（默认路径）
 
