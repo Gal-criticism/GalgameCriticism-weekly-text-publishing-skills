@@ -23,14 +23,14 @@ import os
 import random
 import time
 from pathlib import Path
+from safety import preview_directory
+from safety import selected_images, require_review, require_account, payload_metadata
 
 CRED_ENV = Path.home() / ".config" / "bilibili-weekly-article" / "config.env"
 
 
 def load_credential(path: str | None):
     """返回 Credential 或 None（dry-run 允许为 None）。"""
-    from bilibili_api import Credential
-
     env_file = Path(path) if path else CRED_ENV
     values = {}
     if env_file.is_file():
@@ -41,10 +41,12 @@ def load_credential(path: str | None):
             k, v = line.split("=", 1)
             values[k.strip()] = v.strip().strip('"').strip("'")
     for k in ("SESSDATA", "BILI_JCT", "BUVID3", "DEDE_USER_ID"):
-        if os.environ.get(k):
+        if not path and os.environ.get(k):
             values[k] = os.environ[k]
     if not values.get("SESSDATA") or not values.get("BILI_JCT"):
         return None, values
+    from bilibili_api import Credential
+
     cred = Credential(
         sessdata=values["SESSDATA"],
         bili_jct=values["BILI_JCT"],
@@ -118,8 +120,9 @@ def build_paragraphs(data: dict, issue_dir: Path, imgs: dict[str, dict]) -> list
         if key not in imgs:
             raise SystemExit(f"[build] 封面未上传/未找到: {cover}")
         paras.append(pic_para(imgs[key]))
-        paras.append(empty_para())
-    for sec in data.get("sections", []):
+    for section_index, sec in enumerate(data.get("sections", [])):
+        if section_index:
+            paras.extend([empty_para(), empty_para()])
         paras.append(text_para(sec.get("heading", sec.get("key", "")), font_size=24, bold=True))
         for idx, item in enumerate(sec.get("items", [])):
             if idx > 0:
@@ -138,11 +141,13 @@ def build_paragraphs(data: dict, issue_dir: Path, imgs: dict[str, dict]) -> list
                 if key not in imgs:
                     raise SystemExit(f"[build] 配图未上传: {item['candidates'][sel[1]]}")
                 paras.append(pic_para(imgs[key]))
-    for c in data.get("credits", []) or []:
+    credits = [
+        line for credit in data.get("credits", []) or []
+        for line in credit.splitlines() if line.strip()
+    ]
+    if credits:
         paras.append(empty_para())
-        for line in c.split("\n"):
-            if line.strip():
-                paras.append(text_para(line))
+        paras.append(text_para("\n".join(credits), gray=True))
     return paras
 
 
@@ -179,9 +184,13 @@ def build_raw_content(data: dict, issue_dir: Path, imgs: dict[str, dict]) -> str
     cover = data.get("source", {}).get("cover")
     if cover:
         add_img(imgs[str((issue_dir / cover).resolve())])
-    for sec in data.get("sections", []):
+    for section_index, sec in enumerate(data.get("sections", [])):
+        if section_index:
+            ops.append({"insert": "\n\n"})
         add_text(sec.get("heading", sec.get("key", "")), bold=True)
-        for item in sec.get("items", []):
+        for item_index, item in enumerate(sec.get("items", [])):
+            if item_index:
+                ops.append({"insert": "\n"})
             add_text(item.get("heading", ""), bold=True)
             sel = item.get("selected", [])
             if sel:
@@ -190,8 +199,10 @@ def build_raw_content(data: dict, issue_dir: Path, imgs: dict[str, dict]) -> str
                 add_text(b)
             if len(sel) > 1:
                 add_img(imgs[str((issue_dir / item["candidates"][sel[1]]).resolve())])
-    for c in data.get("credits", []) or []:
-        add_text(c)
+    credits = [credit for credit in data.get("credits", []) or [] if credit.strip()]
+    if credits:
+        ops.append({"insert": "\n"})
+        add_text("\n".join(credits))
     return json.dumps({"ops": ops}, ensure_ascii=False)
 
 
@@ -200,27 +211,20 @@ async def main_async() -> None:
     ap.add_argument("issue_dir", help="期目录")
     ap.add_argument("--article", help="article.json（默认 <期目录>/_preview/article.json）")
     ap.add_argument("--credential", help="凭证 env 文件（默认 ~/.config/bilibili-weekly-article/config.env）")
+    ap.add_argument("--account-id", help="目标 B 站 UID（上传必填）")
     ap.add_argument("--dry-run", action="store_true", help="不登录不上传，用占位图校验结构")
     ap.add_argument("--out", help="payload 输出（默认 <期目录>/_preview/opus_payload.json）")
     args = ap.parse_args()
 
     issue_dir = Path(args.issue_dir).expanduser().resolve()
-    article_path = Path(args.article) if args.article else issue_dir / "_preview" / "article.json"
-    out = Path(args.out) if args.out else issue_dir / "_preview" / "opus_payload.json"
+    preview = preview_directory(issue_dir)
+    article_path = Path(args.article) if args.article else preview / "article.json"
+    out = Path(args.out) if args.out else preview / "opus_payload.json"
     data = json.loads(article_path.read_text(encoding="utf-8"))
 
-    # 收集入选图片
-    wanted: list[Path] = []
-    cover = data.get("source", {}).get("cover")
-    if cover:
-        wanted.append(issue_dir / cover)
-    for sec in data.get("sections", []):
-        for item in sec.get("items", []):
-            for i in item.get("selected", []):
-                wanted.append(issue_dir / item["candidates"][i])
-    missing = [p for p in wanted if not p.is_file()]
-    if missing:
-        raise SystemExit("[build] 素材缺失:\n  " + "\n  ".join(str(m) for m in missing))
+    wanted = selected_images(issue_dir, data)
+    if not args.dry_run:
+        require_review(data)
 
     cred, values = (None, {})
     if not args.dry_run:
@@ -238,7 +242,9 @@ async def main_async() -> None:
         print(f"[build] dry-run：{len(imgs)} 张占位图，未登录未上传")
     else:
         mid = values.get("DEDE_USER_ID") or "0"
-        imgs = upload_images(api_session(cred), cred, wanted)
+        session = api_session(cred)
+        require_account(session, args.account_id)
+        imgs = upload_images(session, cred, wanted)
 
     paragraphs = build_paragraphs(data, issue_dir, imgs)
     raw_content = build_raw_content(data, issue_dir, imgs)
@@ -254,6 +260,9 @@ async def main_async() -> None:
             },
         },
     }
+    payload["_local"] = payload_metadata(data, args.account_id or "dry-run", wanted)
+    from safety import digest
+    payload["_local"]["payload_sha256"] = digest({k: v for k, v in payload.items() if k != "_local"})
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     n_pic = sum(1 for p in paragraphs if p.get("para_type") == 2)
