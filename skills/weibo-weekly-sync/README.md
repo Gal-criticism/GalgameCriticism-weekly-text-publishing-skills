@@ -5,3 +5,5 @@
 Agent 执行说明见 [SKILL.md](SKILL.md)。
 
 只需安装 `skills/weibo-weekly-sync`；本目录包含所需的素材、会话和恢复约定，无需安装总调度或其他平台 skill。已有授权素材包时可直接复用；仅安装本平台需要的依赖即可。
+
+写入前设置 `WEIBO_PROFILE` 和 `WEIBO_ACCOUNT`。专用 Chrome 的配置及旧会话迁移见[浏览器会话规则](references/browser-session.md)。

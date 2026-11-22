@@ -11,15 +11,12 @@
 
 始终保留 profile、Cookie、缓存和用户窗口；不删除锁文件，不调用 `--reset`、`--clean`、`--fresh`、`pkill`、`killall` 或会关闭/替换用户会话的辅助脚本。结束后不要 `agent-browser close` 或关闭连接到的浏览器。任务自己创建的临时 Cookie context 可以在任务结束后释放，但不得影响用户既有会话。
 
-## 一个窗口贯穿本平台发布链（硬性要求）
+## 本平台配置和旧会话迁移
 
-发布任务常被拆成“准备 → 校验 → 发布 → 回读”多步，每一步都 `launchPersistentContext` 再 `close` 会造成用户侧浏览器不停开合，并且每次重启都可能丢草稿、触发风控、甚至把登录态置入风险。
+- 将 `ZHIHU_PROFILE` 设为已有专用 Chrome 数据目录的绝对路径。调试端口用 `ZHIHU_DEBUG_PORT` 覆盖，CDP 仅监听本机。
+- 脚本通过 `Browser.getBrowserCommandLine` 核对 `--user-data-dir` 的真实路径。旧会话如缺少 `--enable-automation` 或使用了 `--no-sandbox`，先保存打开的草稿，再由用户正常退出该专用 Chrome，沿用原可执行文件、数据目录及 Cookie/密钥存储配置重启。保留沙箱并启用 `--enable-automation`。遇到启动限制时，可在支持沙箱的终端手动启动同一专用会话。
+- 需要由脚本启动时，任务须已有启动授权，并设置 `CHROME_ALLOW_LAUNCH=1` 及绝对可执行路径 `CHROME_PATH`。如原会话需要额外的密钥存储参数，请手动启动；脚本检测到占用或锁文件时停止。
+- 写入前设置 `ZHIHU_ACCOUNT_ID` 为目标账号在 `/api/v4/me` 返回的 ID。
+- 点发布前会在素材目录独占创建 `*.attempt.json`。已有标记时仍可用草稿脚本的只读模式，或从创作中心及公开页核对结果。回执不明时按原草稿和账号核对，避免重复写入。
 
-- 用 `scripts/browser-session.cjs` 的 `attach(profileDir, port)`：先 `connectOverCDP` 复用已在运行的专用 Chrome；探测不到调试端口才启动一次，并保持窗口不关。
-- 每步结束只断开连接、**不关闭浏览器**；下一步重新 `attach`。脚本失败或超时后同样先 `attach` 复查，不重开新窗口。
-- 平台端口分开（知乎 `9444`、微博 `9333`），一个平台一个 profile，互不抢占。
-- 删除 `Singleton*` 锁文件是禁止操作：实测会直接清掉该 profile 的已登录 Cookie，只能让用户重新扫码。
-- 受限环境下 Chrome 必须带 `--no-sandbox` 启动；上游 CLI 自带的启动器若不带该参数，会表现为 `CDP connection closed`，此时改用本仓库的 `attach` 启动，而不是反复重试。
-
-
-调用任何上游 CLI 前检查其启动/连接/退出行为。如果它会重置 profile、切换配置或关闭已连接浏览器，改用安全连接工具完成同样的编辑流程；缺少安全能力时明确报告，不能把“无人值守”当作绕过登录或验证码的理由。
+调用上游适配器前核对其启动与退出行为。保留现有专用会话、草稿和登录态。

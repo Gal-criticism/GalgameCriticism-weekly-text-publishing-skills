@@ -3,6 +3,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const { attach } = require('./browser-session.cjs');
+const { imageFile, checkSubmission, claimSubmission, weiboAccount } = require('./safety.cjs');
 
 const args = { publish: false };
 for (let i = 2; i < process.argv.length; i++) {
@@ -16,13 +17,14 @@ const manifest = JSON.parse(fs.readFileSync(args.manifest, 'utf8'));
 const payloadDir = path.dirname(args.manifest);
 const optDir = args.optimized;
 const receiptFile = path.join(payloadDir, 'weibo-receipt.json');
-const account = process.env.WEIBO_ACCOUNT || 'Galgame批评';
+checkSubmission(receiptFile);
 const log = o => console.log(JSON.stringify({ t: new Date().toISOString(), ...(typeof o === 'string' ? { msg: o } : o) }));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // The draft id in `#/history/<draftId>` is NOT the article id. The only reliable way to the
 // public URL is the account timeline: the newest "发布了头条文章" card carries page_info.page_url.
-const WEIBO_UID = process.env.WEIBO_UID || '7615845670';
+const WEIBO_UID = process.env.WEIBO_UID;
+if (args.publish && !/^\d+$/.test(WEIBO_UID || '')) throw new Error('Set WEIBO_UID to the target account UID');
 async function findArticleUrl() {
   for (let i = 0; i < 10; i++) {
     try {
@@ -64,7 +66,7 @@ for (const b of blocks) {
   if (b.type === 'image') {
     imgIndex++;
     const optimized = optDir ? path.join(optDir, path.basename(b.path).replace(/\.(png|jpg|jpeg)$/i, '.jpg')) : null;
-    const file = optimized && fs.existsSync(optimized) ? optimized : path.join(payloadDir, b.path);
+    const file = optimized && fs.existsSync(optimized) ? imageFile(optDir, path.basename(optimized)) : imageFile(payloadDir, b.path);
     imageFiles.push(file);
     htmlParts.push(`<p>WBIMGPH_${imgIndex}</p>`);
     continue;
@@ -113,19 +115,14 @@ const tokenRect = (page, n) => page.evaluate(idx => {
 (async () => {
   const { ctx, port, reused } = await attach(process.env.WEIBO_PROFILE, process.env.CHROME_DEBUG_PORT || 9333);
   log({ step: 'browser', reused, port });
-  const page = ctx.pages()[0] || await ctx.newPage();
+  const page = await ctx.newPage();
 
   await page.goto('https://card.weibo.com/article/v3/editor', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await sleep(7000);
   const writeBtn = page.getByText('写文章', { exact: true }).first();
   if (await writeBtn.count()) { await writeBtn.click().catch(() => {}); await sleep(5000); }
 
-  const nick = await page.evaluate(() => {
-    const hit = [...document.querySelectorAll('*')].find(e => e.children.length === 0 && e.textContent.trim() === 'Galgame批评');
-    return hit ? hit.textContent.trim() : null;
-  }).catch(() => null);
-  log({ step: 'identity', nick, url: page.url() });
-  if (nick !== account) throw new Error(`Unexpected weibo account: ${nick}`);
+  await weiboAccount(page);
 
   const editor = page.locator('.ProseMirror').first();
   await editor.waitFor({ timeout: 30000 });
@@ -223,8 +220,6 @@ const tokenRect = (page, n) => page.evaluate(idx => {
   }
   if (!textOk || s.hosted !== expectedImages || s.placeholders !== 0) throw new Error('Fidelity gate failed; not publishing');
 
-  fs.writeFileSync(receiptFile, JSON.stringify({ ...state, status: 'submitting' }, null, 2));
-
   // 1. 下一步 must be a real locator click. A DOM click on the footer control logs ok:true and does nothing.
   await page.locator('button:has-text("下一步")').first().click({ timeout: 20000 });
   await sleep(5000);
@@ -250,14 +245,13 @@ const tokenRect = (page, n) => page.evaluate(idx => {
 
   // 3. `.n-modal-mask` has aria-hidden and swallows pointer events, so a Playwright click retries forever.
   //    A DOM click on the modal's own 发布 button bypasses hit-testing and is the verified path.
-  const clicked = await page.evaluate(() => {
-    const btn = [...document.querySelectorAll('button')].filter(b => b.textContent.trim() === '发布').pop();
-    if (!btn) return false;
-    btn.click();
-    return true;
-  });
-  log({ step: 'publish_clicked', ok: clicked });
-  if (!clicked) throw new Error('publish button missing after 下一步');
+  await weiboAccount(page);
+  const publishButton = modal.getByRole('button', { name: '发布', exact: true }).last();
+  if (!(await publishButton.count())) throw new Error('Publish button missing after 下一步');
+  claimSubmission(receiptFile);
+  fs.writeFileSync(receiptFile, JSON.stringify({ ...state, status: 'submitting' }, null, 2));
+  await publishButton.evaluate(button => button.click());
+  log({ step: 'publish_clicked' });
 
   // 4. Success is the SPA landing on #/history/<draftId> — it never redirects to a public article URL.
   let draftId = null;
